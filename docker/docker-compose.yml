@@ -1,0 +1,30 @@
+version: '3.8'
+
+services:
+  ubuntu24:
+    build:
+      context: .
+      dockerfile: Dockerfile.ubuntu24
+    container_name: audit-ubuntu24
+    hostname: ubuntu24
+    ports:
+      - "2224:22"
+    networks:
+      - audit-net
+    restart: unless-stopped
+
+  ubuntu18:
+    build:
+      context: .
+      dockerfile: Dockerfile.ubuntu18
+    container_name: audit-ubuntu18
+    hostname: ubuntu18
+    ports:
+      - "2218:22"
+    networks:
+      - audit-net
+    restart: unless-stopped
+
+networks:
+  audit-net:
+    driver: bridge

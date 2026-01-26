@@ -1,0 +1,6 @@
+{
+    "status": "failed",
+    "msg": "The following modules failed to execute: ansible.legacy.setup.",
+    "hostname": "192.168.121.104",
+    "audit_timestamp": "2026-01-23T10:04:37.844680+00:00"
+}

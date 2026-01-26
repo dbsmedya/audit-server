@@ -1,0 +1,17 @@
+# Example Ansible inventory file for server-audit
+# Copy this file to 'hosts' and modify as needed
+
+[webservers]
+web1.example.com ansible_user=admin
+web2.example.com ansible_user=admin
+
+[databases]
+db1.example.com ansible_user=root ansible_port=22
+
+[docker_test]
+# Docker test containers (requires docker-compose up -d)
+ubuntu24 ansible_host=localhost ansible_port=2224 ansible_user=test ansible_password=test
+ubuntu18 ansible_host=localhost ansible_port=2218 ansible_user=test ansible_password=test
+
+[all:vars]
+ansible_python_interpreter=/usr/bin/python3
