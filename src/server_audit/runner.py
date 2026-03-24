@@ -20,6 +20,7 @@ def run_audit(
     inventory_path: str | Path,
     hosts: str = "all",
     output_dir: str | Path | None = None,
+    cmdline: str | None = None,
 ) -> dict[str, AuditResult]:
     """
     Run audit against hosts in the inventory.
@@ -28,6 +29,7 @@ def run_audit(
         inventory_path: Path to Ansible inventory file
         hosts: Host pattern to audit (default: "all")
         output_dir: Optional directory for ansible_runner artifacts
+        cmdline: Extra command-line args for Ansible (e.g. "-k -K")
 
     Returns:
         Dictionary mapping hostnames to AuditResult objects
@@ -49,7 +51,7 @@ def run_audit(
         artifact_dir = str(output_dir)
 
     # Run ansible ad-hoc command with raw module (no Python required on remote)
-    result = ansible_runner.run(
+    runner_kwargs: dict[str, Any] = dict(
         private_data_dir=artifact_dir,
         inventory=str(inventory_path),
         host_pattern=hosts,
@@ -57,6 +59,10 @@ def run_audit(
         module_args=payload,
         quiet=True,
     )
+    if cmdline:
+        runner_kwargs["cmdline"] = cmdline
+
+    result = ansible_runner.run(**runner_kwargs)
 
     results: dict[str, AuditResult] = {}
 
@@ -96,6 +102,7 @@ def run_audit_to_json(
     inventory_path: str | Path,
     output_path: str | Path,
     hosts: str = "all",
+    cmdline: str | None = None,
 ) -> list[Path]:
     """
     Run audit and save results to JSON files.
@@ -104,11 +111,12 @@ def run_audit_to_json(
         inventory_path: Path to Ansible inventory file
         output_path: Path for output (directory or file)
         hosts: Host pattern to audit (default: "all")
+        cmdline: Extra command-line args for Ansible (e.g. "-k -K")
 
     Returns:
         List of paths to created JSON files
     """
-    results = run_audit(inventory_path, hosts)
+    results = run_audit(inventory_path, hosts, cmdline=cmdline)
     output_path = Path(output_path)
     created_files: list[Path] = []
 

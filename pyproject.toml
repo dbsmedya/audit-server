@@ -25,6 +25,7 @@ classifiers = [
 ]
 dependencies = [
     "ansible-runner>=2.3.0",
+    "ansible-core>=2.15.0",
 ]
 
 [project.optional-dependencies]
