@@ -10,6 +10,8 @@ from server_audit.parsers import (
     parse_disk_types,
     parse_disks,
     parse_memory,
+    parse_mysql_config_files,
+    parse_mysql_runtime,
     parse_networks,
     parse_numa,
     parse_os_info,
@@ -212,6 +214,138 @@ semaphores:32000:1024000000:500:32000"""
         assert result.huge_pages_raw == huge_pages
 
 
+class TestParseMySQLConfigFiles:
+    """Tests for parse_mysql_config_files function."""
+
+    def test_last_value_wins_and_conflict_is_reported(self):
+        """A later line overrides an earlier one; differing values are a conflict."""
+        section = """--user=mysql
+--explicit_defaults_for_timestamp=OFF
+--max_connections=4096
+--explicit_defaults_for_timestamp=1"""
+
+        result = parse_mysql_config_files(section)
+
+        assert result.status == "ok"
+        assert result.effective["explicit_defaults_for_timestamp"] == "1"
+        assert result.duplicates["explicit_defaults_for_timestamp"] == ["OFF", "1"]
+        assert result.conflicts == ["explicit_defaults_for_timestamp"]
+        assert result.options == section.split("\n")
+
+    def test_repeated_equal_values_are_not_a_conflict(self):
+        """The same value set twice, including ON versus 1, is a duplicate only."""
+        section = """--log_bin_trust_function_creators=ON
+--log_bin_trust_function_creators=ON
+--event_scheduler=ON
+--event_scheduler=1"""
+
+        result = parse_mysql_config_files(section)
+
+        assert result.duplicates["log_bin_trust_function_creators"] == ["ON", "ON"]
+        assert result.duplicates["event_scheduler"] == ["ON", "1"]
+        assert result.conflicts == []
+
+    def test_option_names_are_normalized(self):
+        """Dashes, underscores and the loose- prefix name the same option."""
+        section = """--collation-server=utf8_unicode_ci
+--loose-audit_log_filter_file=/var/log/mysql/audit.log
+--collation_server=utf8mb4_0900_ai_ci"""
+
+        result = parse_mysql_config_files(section)
+
+        assert result.effective["collation_server"] == "utf8mb4_0900_ai_ci"
+        assert result.effective["audit_log_filter_file"] == "/var/log/mysql/audit.log"
+        assert result.conflicts == ["collation_server"]
+
+    def test_value_may_contain_equals_sign(self):
+        """Only the first equals sign separates the name from the value."""
+        result = parse_mysql_config_files("--early-plugin-load=keyring_vault=keyring_vault.so")
+
+        assert result.effective["early_plugin_load"] == "keyring_vault=keyring_vault.so"
+
+    def test_flag_without_value(self):
+        """An option without a value is recorded with no value."""
+        result = parse_mysql_config_files("--skip-log-bin\n--sql_mode=")
+
+        assert result.effective["skip_log_bin"] is None
+        assert result.effective["sql_mode"] == ""
+
+    def test_password_values_are_masked(self):
+        """A password printed by an old my_print_defaults never reaches the output."""
+        result = parse_mysql_config_files("--password=secret\n--user=mysql")
+
+        assert result.effective["password"] == "*****"
+        assert "secret" not in "\n".join(result.options)
+
+    def test_mysql_not_installed(self):
+        """A host without my_print_defaults reports not_installed."""
+        result = parse_mysql_config_files("MYSQL_NOT_INSTALLED")
+
+        assert result.status == "not_installed"
+        assert result.effective == {}
+
+    def test_error_output_without_options(self):
+        """Lines that are not options are kept as messages."""
+        result = parse_mysql_config_files("my_print_defaults: [ERROR] Found option without preceding group")
+
+        assert result.status == "error"
+        assert result.messages == ["my_print_defaults: [ERROR] Found option without preceding group"]
+
+    def test_no_mysqld_group(self):
+        """Empty output means no option file has a [mysqld] group."""
+        result = parse_mysql_config_files("")
+
+        assert result.status == "empty"
+
+
+class TestParseMySQLRuntime:
+    """Tests for parse_mysql_runtime function."""
+
+    def test_parses_variables(self):
+        """Tab-separated rows become variables; an empty value is preserved."""
+        section = (
+            "explicit_defaults_for_timestamp\tON\n"
+            "sql_mode\t\n"
+            "time_zone\tSYSTEM\n"
+            "version\t8.0.42-33"
+        )
+
+        result = parse_mysql_runtime(section)
+
+        assert result.status == "ok"
+        assert result.variables == {
+            "explicit_defaults_for_timestamp": "ON",
+            "sql_mode": "",
+            "time_zone": "SYSTEM",
+            "version": "8.0.42-33",
+        }
+
+    def test_empty_value_on_the_last_line(self):
+        """A trailing empty value survives the section's whitespace stripping."""
+        result = parse_mysql_runtime("version\t8.0.42-33\nsql_mode")
+
+        assert result.variables["sql_mode"] == ""
+
+    def test_access_denied(self):
+        """A failed login is reported as unavailable with the server's message."""
+        section = (
+            "ERROR 1045 (28000): Access denied for user 'ubuntu'@'localhost' (using password: NO)\n"
+            "MYSQL_QUERY_FAILED"
+        )
+
+        result = parse_mysql_runtime(section)
+
+        assert result.status == "unavailable"
+        assert result.variables == {}
+        assert result.messages[0].startswith("ERROR 1045")
+
+    def test_mysql_not_installed(self):
+        """A host without the mysql client reports not_installed."""
+        result = parse_mysql_runtime("MYSQL_NOT_INSTALLED")
+
+        assert result.status == "not_installed"
+
+
 class TestParseRawOutput:
     """Tests for parse_raw_output function."""
 
@@ -260,3 +394,30 @@ class TestParseRawOutput:
         assert "networks" in data
         assert "vm_settings" in data
         assert data["hostname"] == "testhost"
+
+    def test_output_without_mysql_sections(self, sample_output: str):
+        """Output from a payload without MySQL sections parses with mysql set to None."""
+        result = parse_raw_output(sample_output, "testhost")
+
+        assert result.mysql is None
+        assert result.to_dict()["mysql"] is None
+
+    def test_output_with_mysql_sections(self, sample_output: str):
+        """MySQL sections are parsed and serialized under the mysql key."""
+        raw = sample_output + (
+            "###MARKER_MYSQL_DEFAULTS_START###\n"
+            "--explicit_defaults_for_timestamp=OFF\n"
+            "--explicit_defaults_for_timestamp=1\n"
+            "###MARKER_MYSQL_DEFAULTS_END###\n"
+            "###MARKER_MYSQL_VARS_START###\n"
+            "explicit_defaults_for_timestamp\tON\n"
+            "version\t8.0.42-33\n"
+            "###MARKER_MYSQL_VARS_END###\n"
+        )
+
+        data = parse_raw_output(raw, "testhost").to_dict()
+
+        assert data["mysql"]["config_files"]["effective"]["explicit_defaults_for_timestamp"] == "1"
+        assert data["mysql"]["config_files"]["conflicts"] == ["explicit_defaults_for_timestamp"]
+        assert data["mysql"]["runtime"]["variables"]["explicit_defaults_for_timestamp"] == "ON"
+        assert data["mysql"]["runtime"]["status"] == "ok"

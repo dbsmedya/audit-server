@@ -24,6 +24,26 @@ MARKER_VM_START = "###MARKER_VM_START###"
 MARKER_VM_END = "###MARKER_VM_END###"
 MARKER_NUMA_START = "###MARKER_NUMA_START###"
 MARKER_NUMA_END = "###MARKER_NUMA_END###"
+MARKER_MYSQL_DEFAULTS_START = "###MARKER_MYSQL_DEFAULTS_START###"
+MARKER_MYSQL_DEFAULTS_END = "###MARKER_MYSQL_DEFAULTS_END###"
+MARKER_MYSQL_VARS_START = "###MARKER_MYSQL_VARS_START###"
+MARKER_MYSQL_VARS_END = "###MARKER_MYSQL_VARS_END###"
+
+# Variables that change what the application sees. A replacement host must
+# carry them over from the source; they are compared, never recalculated.
+MYSQL_BEHAVIOUR_VARIABLES = (
+    "version",
+    "explicit_defaults_for_timestamp",
+    "sql_mode",
+    "character_set_server",
+    "collation_server",
+    "lower_case_table_names",
+    "time_zone",
+    "system_time_zone",
+    "transaction_isolation",
+    "auto_increment_increment",
+    "auto_increment_offset",
+)
 
 
 def build_payload() -> str:
@@ -34,6 +54,7 @@ def build_payload() -> str:
         Shell command string that collects all system information
         with delimited sections for parsing.
     """
+    mysql_variables = ", ".join(f"'{name}'" for name in MYSQL_BEHAVIOUR_VARIABLES)
     return f"""export LC_ALL=C
 
 # OS Information
@@ -110,6 +131,25 @@ else
     echo "NUMA_NOT_AVAILABLE"
 fi
 echo '{MARKER_NUMA_END}'
+
+# MySQL option files, as mysqld reads them (my_print_defaults masks passwords)
+echo '{MARKER_MYSQL_DEFAULTS_START}'
+if command -v my_print_defaults >/dev/null 2>&1; then
+    my_print_defaults mysqld 2>&1
+else
+    echo 'MYSQL_NOT_INSTALLED'
+fi
+echo '{MARKER_MYSQL_DEFAULTS_END}'
+
+# MySQL behaviour variables from the running server; credentials come from the
+# executing user's option files (for example root's socket login under become)
+echo '{MARKER_MYSQL_VARS_START}'
+if command -v mysql >/dev/null 2>&1; then
+    mysql --connect-timeout=5 -NB -e "SHOW GLOBAL VARIABLES WHERE Variable_name IN ({mysql_variables})" 2>&1 || echo 'MYSQL_QUERY_FAILED'
+else
+    echo 'MYSQL_NOT_INSTALLED'
+fi
+echo '{MARKER_MYSQL_VARS_END}'
 """
 
 
@@ -130,4 +170,6 @@ def get_markers() -> dict[str, tuple[str, str]]:
         "network": (MARKER_NET_START, MARKER_NET_END),
         "vm": (MARKER_VM_START, MARKER_VM_END),
         "numa": (MARKER_NUMA_START, MARKER_NUMA_END),
+        "mysql_defaults": (MARKER_MYSQL_DEFAULTS_START, MARKER_MYSQL_DEFAULTS_END),
+        "mysql_vars": (MARKER_MYSQL_VARS_START, MARKER_MYSQL_VARS_END),
     }

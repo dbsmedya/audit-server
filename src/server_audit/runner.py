@@ -21,6 +21,7 @@ def run_audit(
     hosts: str = "all",
     output_dir: str | Path | None = None,
     cmdline: str | None = None,
+    passwords: dict[str, str] | None = None,
 ) -> dict[str, AuditResult]:
     """
     Run audit against hosts in the inventory.
@@ -30,6 +31,8 @@ def run_audit(
         hosts: Host pattern to audit (default: "all")
         output_dir: Optional directory for ansible_runner artifacts
         cmdline: Extra command-line args for Ansible (e.g. "-k -K")
+        passwords: Dict mapping prompt regex patterns to password responses
+                   (e.g. {"SSH password:\\s*$": "secret"})
 
     Returns:
         Dictionary mapping hostnames to AuditResult objects
@@ -61,6 +64,8 @@ def run_audit(
     )
     if cmdline:
         runner_kwargs["cmdline"] = cmdline
+    if passwords:
+        runner_kwargs["passwords"] = passwords
 
     result = ansible_runner.run(**runner_kwargs)
 
@@ -103,6 +108,7 @@ def run_audit_to_json(
     output_path: str | Path,
     hosts: str = "all",
     cmdline: str | None = None,
+    passwords: dict[str, str] | None = None,
 ) -> list[Path]:
     """
     Run audit and save results to JSON files.
@@ -112,11 +118,12 @@ def run_audit_to_json(
         output_path: Path for output (directory or file)
         hosts: Host pattern to audit (default: "all")
         cmdline: Extra command-line args for Ansible (e.g. "-k -K")
+        passwords: Dict mapping prompt regex patterns to password responses
 
     Returns:
         List of paths to created JSON files
     """
-    results = run_audit(inventory_path, hosts, cmdline=cmdline)
+    results = run_audit(inventory_path, hosts, cmdline=cmdline, passwords=passwords)
     output_path = Path(output_path)
     created_files: list[Path] = []
 

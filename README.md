@@ -14,6 +14,7 @@ A Python tool for collecting operating system and hardware information from Linu
   - Disk information (mounts, capacity, SSD/HDD detection)
   - Network interfaces (IPv4, MAC addresses)
   - VM tuning settings (swappiness, overcommit, transparent hugepages)
+  - MySQL, when installed: the options mysqld reads from its option files (`my_print_defaults mysqld`), with conflicting duplicates flagged, and the running server's behaviour variables (see [MySQL](#mysql))
 - **JSON output** - Structured output for easy integration with other tools
 - **Library and CLI** - Use programmatically or from the command line
 
@@ -22,6 +23,40 @@ A Python tool for collecting operating system and hardware information from Linu
 - Python 3.9+
 - SSH access to target hosts
 - Ansible Runner (`ansible-runner>=2.3.0`)
+
+## MySQL
+
+On a MySQL host the audit adds a `mysql` object. On other hosts it is `null`. It has two parts.
+
+**`config_files`: what the option files say.** This is the output of `my_print_defaults mysqld`:
+- `options`: the lines in the order mysqld reads them.
+- `effective`: each option's last value, which is the one mysqld uses. Names are normalized:
+  dashes equal underscores and the `loose-` prefix is dropped.
+- `duplicates`: every option set more than once.
+- `conflicts`: the duplicates whose values differ. For example, `explicit_defaults_for_timestamp=OFF`
+  followed later by `=1` runs with it **on**.
+
+`my_print_defaults` masks passwords. Any `password` or `*_password` value that an older client
+prints is masked by the parser.
+
+**`runtime`: what the running server uses.** These variables change what the application sees,
+so a replacement host must match its source for all of them: `version`,
+`explicit_defaults_for_timestamp`, `sql_mode`, `character_set_server`, `collation_server`,
+`lower_case_table_names`, `time_zone`, `system_time_zone`, `transaction_isolation`,
+`auto_increment_increment`, `auto_increment_offset`.
+
+The query runs through the `mysql` client with the executing user's option files, so that user
+needs a working login, for example root's socket login when run with become. If the login fails,
+`status` is `unavailable` and `messages` holds the client's error. The rest of the audit still
+completes.
+
+| `status` | `config_files` | `runtime` |
+|---|---|---|
+| `ok` | options were read | variables were read |
+| `empty` | no option file has a `[mysqld]` group | — |
+| `error` | only error output | — |
+| `unavailable` | — | the client could not log in or query |
+| `not_installed` | no `my_print_defaults` on the host | no `mysql` client on the host |
 
 ## Installation
 
@@ -173,7 +208,8 @@ Each audit produces a JSON file with the following structure:
             "semopm": "500",
             "semmni": "32000"
         }
-    }
+    },
+    "mysql": null
 }
 ```
 

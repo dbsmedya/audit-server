@@ -10,6 +10,9 @@ from server_audit.models import (
     AuditResult,
     DiskInfo,
     HardwareInfo,
+    MySQLConfigFiles,
+    MySQLInfo,
+    MySQLRuntime,
     NetworkInfo,
     OSInfo,
     VMSettings,
@@ -417,6 +420,143 @@ def parse_vm_settings(vm_section: str, huge_pages_raw: list[str]) -> VMSettings:
     )
 
 
+MYSQL_NOT_INSTALLED = "MYSQL_NOT_INSTALLED"
+MASKED_VALUE = "*****"
+
+_BOOLEAN_SPELLINGS = {"on": "1", "true": "1", "yes": "1", "off": "0", "false": "0", "no": "0"}
+
+
+def _normalize_option_name(name: str) -> str:
+    """Name an option the way mysqld does: dashes equal underscores, loose- is dropped."""
+    name = name.strip().lower().replace("-", "_")
+    if name.startswith("loose_"):
+        name = name[len("loose_"):]
+    return name
+
+
+def _comparable_value(value: str | None) -> str | None:
+    """Value used only to decide whether two settings of one option differ."""
+    if value is None:
+        return None
+    value = value.strip().lower()
+    return _BOOLEAN_SPELLINGS.get(value, value)
+
+
+def parse_mysql_config_files(section: str) -> MySQLConfigFiles:
+    """
+    Parse `my_print_defaults mysqld` output.
+
+    Each option line is `--name=value` or a bare `--name`. mysqld applies them in
+    order, so the last value of a name is the one it runs with; a name set more
+    than once to different values is reported as a conflict.
+
+    Args:
+        section: Output of my_print_defaults mysqld
+
+    Returns:
+        MySQLConfigFiles with the options, their effective values and conflicts
+    """
+    if section.strip() == MYSQL_NOT_INSTALLED:
+        return MySQLConfigFiles("not_installed", [], {}, {}, [], [])
+
+    options: list[str] = []
+    messages: list[str] = []
+    values: dict[str, list[str | None]] = {}
+
+    for line in section.split("\n"):
+        line = line.strip()
+        if not line:
+            continue
+        if not line.startswith("--"):
+            messages.append(line)
+            continue
+
+        raw_name, separator, value = line[2:].partition("=")
+        name = _normalize_option_name(raw_name)
+        parsed_value: str | None = value if separator else None
+        # my_print_defaults masks passwords since 5.7; older clients print them
+        if separator and (name == "password" or name.endswith("_password")):
+            parsed_value = MASKED_VALUE
+            line = f"--{raw_name}={MASKED_VALUE}"
+
+        options.append(line)
+        values.setdefault(name, []).append(parsed_value)
+
+    effective = {name: settings[-1] for name, settings in values.items()}
+    duplicates = {name: settings for name, settings in values.items() if len(settings) > 1}
+    conflicts = [
+        name
+        for name, settings in duplicates.items()
+        if len({_comparable_value(value) for value in settings}) > 1
+    ]
+
+    if options:
+        status = "ok"
+    elif messages:
+        status = "error"
+    else:
+        status = "empty"
+
+    return MySQLConfigFiles(status, options, effective, duplicates, conflicts, messages)
+
+
+def parse_mysql_runtime(section: str) -> MySQLRuntime:
+    """
+    Parse `mysql -NB` output of SHOW GLOBAL VARIABLES.
+
+    Each row is `name<TAB>value`. An empty value on the section's last line loses
+    its tab to whitespace stripping, so a bare variable name reads as empty.
+
+    Args:
+        section: Output of the behaviour-variable query, or the client's error
+
+    Returns:
+        MySQLRuntime with the variables read, or the reason none were
+    """
+    if section.strip() == MYSQL_NOT_INSTALLED:
+        return MySQLRuntime("not_installed", {}, [])
+
+    variables: dict[str, str] = {}
+    messages: list[str] = []
+
+    for line in section.split("\n"):
+        if not line.strip():
+            continue
+        name, separator, value = line.partition("\t")
+        if separator and re.fullmatch(r"[a-z0-9_]+", name):
+            variables[name] = value
+        elif re.fullmatch(r"[a-z0-9_]+", line.strip()):
+            variables[line.strip()] = ""
+        else:
+            messages.append(line.strip())
+
+    status = "ok" if variables else "unavailable"
+    return MySQLRuntime(status, variables, messages)
+
+
+def parse_mysql(raw_text: str) -> MySQLInfo | None:
+    """
+    Parse the MySQL sections, if the payload that produced raw_text had them.
+
+    Args:
+        raw_text: Complete output from shell payload
+
+    Returns:
+        MySQLInfo, or None for output from a payload without MySQL sections
+    """
+    markers = get_markers()
+    try:
+        defaults_section = get_section(raw_text, *markers["mysql_defaults"])
+        vars_section = get_section(raw_text, *markers["mysql_vars"])
+    except ParseError:
+        return None
+
+    return MySQLInfo(
+        config_files=parse_mysql_config_files(defaults_section),
+        runtime=parse_mysql_runtime(vars_section),
+    )
+
+
 def parse_raw_output(raw_text: str, hostname: str) -> AuditResult:
     """
     Parse complete raw output into structured AuditResult.
@@ -460,4 +600,5 @@ def parse_raw_output(raw_text: str, hostname: str) -> AuditResult:
         disks=disks,
         networks=networks,
         vm_settings=vm_settings,
+        mysql=parse_mysql(raw_text),
     )

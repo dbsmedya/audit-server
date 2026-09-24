@@ -27,7 +27,9 @@ The canonical contract is maintained at:
 | `vm_settings.*` | string | all strings | Template uses `\| int` Jinja2 filter for numeric comparisons |
 
 ### Fields NOT consumed by pg-health
-`networks`, `hostname`, `audit_timestamp`, `hardware.cpu_model`, `hardware.numa`, `vm_settings.huge_pages_raw`
+`networks`, `hostname`, `audit_timestamp`, `hardware.cpu_model`, `hardware.numa`, `vm_settings.huge_pages_raw`, `mysql`
+
+`mysql` is an additive top-level key: an object on MySQL hosts, `null` elsewhere. See the README's MySQL section.
 
 ## Breaking changes
 

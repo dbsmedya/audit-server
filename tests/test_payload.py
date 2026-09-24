@@ -2,7 +2,7 @@
 
 import pytest
 
-from server_audit.payload import build_payload, get_markers
+from server_audit.payload import MYSQL_BEHAVIOUR_VARIABLES, build_payload, get_markers
 
 
 class TestBuildPayload:
@@ -73,6 +73,28 @@ class TestBuildPayload:
         assert "dirty_ratio" in payload
         assert "transparent_hugepage" in payload
 
+    def test_collects_mysql_option_files(self):
+        """Payload should print the options mysqld reads from its option files."""
+        payload = build_payload()
+        assert "my_print_defaults mysqld" in payload
+        # --show would print passwords in cleartext
+        assert "--show" not in payload
+
+    def test_collects_mysql_behaviour_variables(self):
+        """Payload should read every behaviour variable from the running server."""
+        payload = build_payload()
+        assert "SHOW GLOBAL VARIABLES" in payload
+        assert "--connect-timeout" in payload
+        for name in MYSQL_BEHAVIOUR_VARIABLES:
+            assert f"'{name}'" in payload, f"Missing variable {name}"
+
+    def test_mysql_sections_tolerate_hosts_without_mysql(self):
+        """Payload should report a missing MySQL client instead of failing."""
+        payload = build_payload()
+        assert "command -v my_print_defaults" in payload
+        assert "command -v mysql" in payload
+        assert "MYSQL_NOT_INSTALLED" in payload
+
 
 class TestGetMarkers:
     """Tests for get_markers function."""
@@ -85,7 +107,10 @@ class TestGetMarkers:
     def test_all_sections_present(self):
         """Should have all expected sections."""
         markers = get_markers()
-        expected = {"os", "kernel", "memory", "cpu", "disk_type", "df", "network", "vm", "numa"}
+        expected = {
+            "os", "kernel", "memory", "cpu", "disk_type", "df", "network", "vm", "numa",
+            "mysql_defaults", "mysql_vars",
+        }
         assert set(markers.keys()) == expected
 
     def test_marker_format(self):
