@@ -5,7 +5,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from server_audit.exceptions import ConnectionError, PayloadError
+from server_audit.exceptions import AuditError, ConnectionError, PayloadError
 from server_audit.runner import get_host_list, run_audit, run_audit_to_json
 
 
@@ -74,6 +74,51 @@ class TestRunAudit:
 
         with pytest.raises(PayloadError):
             run_audit(sample_inventory)
+
+    @patch("server_audit.runner.ansible_runner.run")
+    def test_passes_absolute_inventory_path(
+        self, mock_run, sample_inventory: Path, sample_output: str, monkeypatch
+    ):
+        """A relative inventory path reaches Ansible as an absolute path.
+
+        ansible_runner resolves a relative path against its own private data
+        directory, where the inventory does not exist, so no host matches.
+        """
+        mock_result = MagicMock()
+        mock_result.events = [
+            {
+                "event": "runner_on_ok",
+                "event_data": {"host": "testhost", "res": {"stdout": sample_output}},
+            }
+        ]
+        mock_run.return_value = mock_result
+        monkeypatch.chdir(sample_inventory.parent)
+
+        run_audit(Path(sample_inventory.name))
+
+        assert mock_run.call_args.kwargs["inventory"] == str(sample_inventory.resolve())
+
+    @patch("server_audit.runner.ansible_runner.run")
+    def test_raises_when_no_host_returns_a_result(self, mock_run, sample_inventory: Path):
+        """A run in which no host produced a result is an error, not an empty success."""
+        mock_result = MagicMock()
+        mock_result.events = []
+        mock_result.status = "successful"
+        mock_result.rc = 0
+        mock_result.stdout.read.return_value = (
+            "SSH password: \n"
+            "\x1b[1;35m[WARNING]: Could not match supplied host pattern, ignoring: databases\x1b[0m\n"
+            "\x1b[1;35m[WARNING]: No hosts matched, nothing to do\x1b[0m\n"
+        )
+        mock_run.return_value = mock_result
+
+        with pytest.raises(AuditError) as exc:
+            run_audit(sample_inventory, hosts="databases")
+
+        message = str(exc.value)
+        assert "No host returned a result" in message
+        assert "Could not match supplied host pattern, ignoring: databases" in message
+        assert "\x1b[" not in message
 
 
 class TestRunAuditToJson:

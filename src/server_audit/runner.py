@@ -3,6 +3,7 @@ Ansible runner orchestration for executing audit payloads.
 """
 
 import json
+import re
 import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
@@ -10,7 +11,7 @@ from typing import Any
 
 import ansible_runner
 
-from server_audit.exceptions import ConnectionError, PayloadError
+from server_audit.exceptions import AuditError, ConnectionError, PayloadError
 from server_audit.models import AuditResult
 from server_audit.parsers import parse_raw_output
 from server_audit.payload import build_payload
@@ -40,8 +41,11 @@ def run_audit(
     Raises:
         ConnectionError: If connection to a host fails
         PayloadError: If payload execution fails
+        AuditError: If no host returned a result
     """
-    inventory_path = Path(inventory_path)
+    # ansible_runner resolves a relative inventory against its private data
+    # directory, where it does not exist; an absolute path is read where it is
+    inventory_path = Path(inventory_path).resolve()
     if not inventory_path.exists():
         raise FileNotFoundError(f"Inventory file not found: {inventory_path}")
 
@@ -100,7 +104,24 @@ def run_audit(
             msg = res.get("msg", "Host unreachable")
             raise ConnectionError(f"Cannot connect: {msg}", host=host)
 
+    if not results:
+        raise AuditError(
+            f"No host returned a result (runner status {result.status}, rc {result.rc}). "
+            f"Last Ansible output: {_ansible_output_tail(result)}"
+        )
+
     return results
+
+
+def _ansible_output_tail(result: Any, lines: int = 5) -> str:
+    """Last lines Ansible printed, without colour codes, for an error message."""
+    try:
+        text = result.stdout.read()
+    except Exception:
+        return "(unavailable)"
+    text = re.sub(r"\x1b\[[0-9;]*m", "", text)
+    tail = [line.strip() for line in text.splitlines() if line.strip()][-lines:]
+    return " | ".join(tail) or "(none)"
 
 
 def run_audit_to_json(
@@ -159,7 +180,8 @@ def get_host_list(inventory_path: str | Path, hosts: str = "all") -> list[str]:
     Returns:
         List of hostnames matching the pattern
     """
-    inventory_path = Path(inventory_path)
+    # Absolute for the same reason as in run_audit
+    inventory_path = Path(inventory_path).resolve()
     if not inventory_path.exists():
         raise FileNotFoundError(f"Inventory file not found: {inventory_path}")
 
