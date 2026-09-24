@@ -463,7 +463,7 @@ def parse_mysql_config_files(section: str) -> MySQLConfigFiles:
     messages: list[str] = []
     values: dict[str, list[str | None]] = {}
 
-    for line in section.split("\n"):
+    for line in section.splitlines():
         line = line.strip()
         if not line:
             continue
@@ -519,7 +519,8 @@ def parse_mysql_runtime(section: str) -> MySQLRuntime:
     variables: dict[str, str] = {}
     messages: list[str] = []
 
-    for line in section.split("\n"):
+    # splitlines() also drops the CR of CRLF line endings
+    for line in section.splitlines():
         if not line.strip():
             continue
         name, separator, value = line.partition("\t")
@@ -571,6 +572,8 @@ def parse_raw_output(raw_text: str, hostname: str) -> AuditResult:
     Raises:
         ParseError: If required sections cannot be parsed
     """
+    # The raw module runs the payload in a PTY, which returns CRLF line endings
+    raw_text = raw_text.replace("\r\n", "\n")
     markers = get_markers()
 
     # Extract all sections

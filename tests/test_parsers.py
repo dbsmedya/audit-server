@@ -320,6 +320,12 @@ class TestParseMySQLRuntime:
             "version": "8.0.42-33",
         }
 
+    def test_crlf_line_endings(self):
+        """Lines ending in CRLF, as the raw module's PTY returns them, give clean values."""
+        result = parse_mysql_runtime("sql_mode\t\r\ntime_zone\tSYSTEM\r\nversion\t8.0.42-33")
+
+        assert result.variables == {"sql_mode": "", "time_zone": "SYSTEM", "version": "8.0.42-33"}
+
     def test_empty_value_on_the_last_line(self):
         """A trailing empty value survives the section's whitespace stripping."""
         result = parse_mysql_runtime("version\t8.0.42-33\nsql_mode")
@@ -394,6 +400,23 @@ class TestParseRawOutput:
         assert "networks" in data
         assert "vm_settings" in data
         assert data["hostname"] == "testhost"
+
+    def test_crlf_output_leaves_no_carriage_returns(self, sample_output: str):
+        """Output with CRLF line endings, as the raw module's PTY returns it, parses without \\r."""
+        raw = (sample_output + (
+            "###MARKER_MYSQL_DEFAULTS_START###\n"
+            "--sql_mode=\n"
+            "###MARKER_MYSQL_DEFAULTS_END###\n"
+            "###MARKER_MYSQL_VARS_START###\n"
+            "sql_mode\t\n"
+            "version\t8.0.42-33\n"
+            "###MARKER_MYSQL_VARS_END###\n"
+        )).replace("\n", "\r\n")
+
+        result = parse_raw_output(raw, "testhost")
+
+        # repr() shows a carriage return as the two characters backslash and r
+        assert "\\r" not in repr(result.to_dict())
 
     def test_output_without_mysql_sections(self, sample_output: str):
         """Output from a payload without MySQL sections parses with mysql set to None."""
