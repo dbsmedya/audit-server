@@ -91,6 +91,9 @@ server-audit -i inventory/hosts -o audit_results.json
 
 # Verbose mode
 server-audit -i inventory/hosts -o output/ -v
+
+# SSH password login (prompts once, like ansible -k; needs sshpass on this host)
+server-audit -i inventory/hosts -o output/ --hosts databases -k
 ```
 
 #### CLI Options
@@ -100,6 +103,7 @@ server-audit -i inventory/hosts -o output/ -v
 | `-i, --inventory PATH` | Path to Ansible inventory file (required) |
 | `-o, --output PATH` | Output path - directory for per-host files, or `.json` file for combined output (required) |
 | `--hosts PATTERN` | Host pattern to audit (default: `all`) |
+| `-k, --ask-pass` | Ask for the SSH password once and give it to Ansible, as `ansible -k` does. Needs `sshpass` on the control host |
 | `-v, --verbose` | Enable verbose output |
 | `-V, --version` | Show version |
 

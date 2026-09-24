@@ -3,12 +3,16 @@ Command-line interface for server-audit.
 """
 
 import argparse
+import getpass
 import sys
 from pathlib import Path
 
 from server_audit import __version__
 from server_audit.exceptions import AuditError
 from server_audit.runner import run_audit_to_json
+
+# The prompt `ansible -k` prints; ansible_runner answers it with the password
+SSH_PASSWORD_PROMPT = r"SSH password:\s*$"
 
 
 def create_parser() -> argparse.ArgumentParser:
@@ -55,6 +59,12 @@ Examples:
     )
 
     parser.add_argument(
+        "-k", "--ask-pass",
+        action="store_true",
+        help="Ask for the SSH password, as ansible -k does (needs sshpass on this host)",
+    )
+
+    parser.add_argument(
         "-v", "--verbose",
         action="store_true",
         help="Enable verbose output",
@@ -88,6 +98,12 @@ def main(argv: list[str] | None = None) -> int:
             print(f"Error: Inventory file not found: {args.inventory}", file=sys.stderr)
             return 1
 
+        cmdline = None
+        passwords = None
+        if args.ask_pass:
+            cmdline = "-k"
+            passwords = {SSH_PASSWORD_PROMPT: getpass.getpass("SSH password: ")}
+
         if args.verbose:
             print("Running audit...")
 
@@ -95,6 +111,8 @@ def main(argv: list[str] | None = None) -> int:
             inventory_path=args.inventory,
             output_path=args.output,
             hosts=args.hosts,
+            cmdline=cmdline,
+            passwords=passwords,
         )
 
         if args.verbose:
